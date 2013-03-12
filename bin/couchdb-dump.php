@@ -1,7 +1,7 @@
 #!/usr/bin/env php
 <?php
 
-fwrite(STDERR, "COUCH DB DUMPER | version: 1.0.0" . PHP_EOL);
+fwrite(STDERR, "COUCH DB DUMPER | version: 1.1.0" . PHP_EOL);
 fwrite(STDERR, "(c) Copyright 2013, Anton Bondar <anton@zebooka.com> http://zebooka.com/soft/LICENSE/" . PHP_EOL . PHP_EOL);
 
 $help = <<<HELP
@@ -14,6 +14,7 @@ OPTIONS:
    -H <HOSTNAME>      Hostname or IP of CouchDB server (default: 'localhost').
    -p <PORT>          Port of CouchDB server (default: 5984).
    -d <DATABASE>      Database to dump.
+   -X                 No revisions history in dump.
 
 USAGE:
    {$_SERVER['argv'][0]} -H localhost -p 5984 -d test > dump.json
@@ -32,6 +33,7 @@ if (isset($params['h'])) {
 $host = isset($params['H']) ? trim($params['H']) : 'localhost';
 $port = isset($params['p']) ? intval($params['p']) : 5984;
 $database = isset($params['d']) ? strval($params['d']) : null;
+$noHistory = isset($params['X']) ? $params['X'] : false;
 
 if ('' === $host || $port < 1 || 65535 < $port) {
     fwrite(STDERR, "ERROR: Please specify valid hostname and port (-H <HOSTNAME> and -p <PORT>)." . PHP_EOL);
@@ -63,13 +65,21 @@ if (!isset($all_docs['rows']) || !count($all_docs['rows']) || !is_array($all_doc
     exit(2);
 }
 // first part of dump
-fwrite(STDOUT, '{"new_edits":false,"docs":[' . PHP_EOL);
+if (!$noHistory) {
+    fwrite(STDOUT, '{"new_edits":false,"docs":[' . PHP_EOL);
+} else {
+    fwrite(STDOUT, '{"docs":[' . PHP_EOL);
+}
 $first = true;
 $count = count($all_docs['rows']);
 fwrite(STDERR, "Found {$count} documents..." . PHP_EOL);
 foreach ($all_docs['rows'] as $doc) {
     // foreach DOC get all revs
-    $url = "http://{$host}:{$port}/{$database}/" . urlencode($doc['id']) . "?revs=true&revs_info=true";
+    if (!$noHistory) {
+        $url = "http://{$host}:{$port}/{$database}/" . urlencode($doc['id']) . "?revs=true&revs_info=true";
+    } else {
+        $url = "http://{$host}:{$port}/{$database}/" . urlencode($doc['id']);
+    }
     fwrite(STDERR, "[{$doc['id']}]");
     $curl = getCommonCurl($url);
     $result = curl_exec($curl);
@@ -128,7 +138,9 @@ foreach ($all_docs['rows'] as $doc) {
         // we have only one revision
         unset($doc_revs['_revs_info']);
         $lastRev = $doc_revs['_rev'];
-        fwrite(STDERR, "" . PHP_EOL);
+        if ($noHistory) {
+            unset($doc_revs['_rev']);
+        }
         $full_doc = json_encode($doc_revs, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
         if ($full_doc !== null && $full_doc !== false) {
             if (!$first) {
