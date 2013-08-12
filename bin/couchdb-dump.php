@@ -1,7 +1,7 @@
 #!/usr/bin/env php
 <?php
 
-fwrite(STDERR, "COUCH DB DUMPER | version: 1.1.0" . PHP_EOL);
+fwrite(STDERR, "COUCH DB DUMPER | version: 1.2.0" . PHP_EOL);
 fwrite(STDERR, "(c) Copyright 2013, Anton Bondar <anton@zebooka.com> http://zebooka.com/soft/LICENSE/" . PHP_EOL . PHP_EOL);
 
 $help = <<<HELP
@@ -15,12 +15,13 @@ OPTIONS:
    -p <PORT>          Port of CouchDB server (default: 5984).
    -d <DATABASE>      Database to dump.
    -X                 No revisions history in dump.
+   -y <PHP_FILE>      Include this PHP script that returns callback/function to check if document/revision needs to be dumped.
 
 USAGE:
    {$_SERVER['argv'][0]} -H localhost -p 5984 -d test > dump.json
 HELP;
 
-$params = parseParameters($_SERVER['argv'], array('H', 'p', 'd'));
+$params = parseParameters($_SERVER['argv'], array('H', 'p', 'd', 'y'));
 error_reporting(!empty($params['e']) ? -1 : 0);
 defined('JSON_UNESCAPED_SLASHES') || define('JSON_UNESCAPED_SLASHES', '0');
 defined('JSON_UNESCAPED_UNICODE') || define('JSON_UNESCAPED_UNICODE', '0');
@@ -34,6 +35,15 @@ $host = isset($params['H']) ? trim($params['H']) : 'localhost';
 $port = isset($params['p']) ? intval($params['p']) : 5984;
 $database = isset($params['d']) ? strval($params['d']) : null;
 $noHistory = isset($params['X']) ? $params['X'] : false;
+$callbackFile = isset($params['y']) ? $params['y'] : null;
+$callbackFilter = null;
+if (null !== $callbackFile) {
+    $callbackFilter = include $callbackFile;
+    if (!is_callable($callbackFilter)) {
+        fwrite(STDERR, "ERROR: PHP script with filter callback/function must return valid callable." . PHP_EOL);
+        exit(1);
+    }
+}
 
 if ('' === $host || $port < 1 || 65535 < $port) {
     fwrite(STDERR, "ERROR: Please specify valid hostname and port (-H <HOSTNAME> and -p <PORT>)." . PHP_EOL);
@@ -115,7 +125,12 @@ foreach ($all_docs['rows'] as $doc) {
                     fwrite(STDERR, "ERROR: Unsupported response when fetching document [{$doc['id']}] revision [{$rev['rev']}] from db '{$database}' (http status code = {$statusCode}) " . PHP_EOL);
                     exit(2);
                 }
-                fwrite(STDERR, "" . PHP_EOL);
+                if (is_callable($callbackFilter) && !call_user_func($callbackFilter, json_decode($full_doc, true), $lastRev)) {
+                    fwrite(STDERR, " = skipped" . PHP_EOL);
+                    continue; // skip that doc version because callback returned false
+                } else {
+                    fwrite(STDERR, "" . PHP_EOL);
+                }
             } elseif ('missing' === $rev['status']) {
                 fwrite(STDERR, " = missing" . PHP_EOL);
                 continue; // missing docs are not available anyhow
@@ -138,6 +153,12 @@ foreach ($all_docs['rows'] as $doc) {
         // we have only one revision
         unset($doc_revs['_revs_info']);
         $lastRev = $doc_revs['_rev'];
+        if (is_callable($callbackFilter) && !call_user_func($callbackFilter, $doc_revs, $lastRev)) {
+            fwrite(STDERR, " = skipped" . PHP_EOL);
+            continue; // skip that doc version because callback returned false
+        } else {
+            fwrite(STDERR, "" . PHP_EOL);
+        }
         if ($noHistory) {
             unset($doc_revs['_rev']);
         }
